@@ -90,16 +90,32 @@
         </div>
       </div>
 
-      <div class="form-group">
-        <label for="name-input">ชื่อผู้เข้าสอบ</label>
-        <input
-          id="name-input"
-          type="text"
-          placeholder="กรอกชื่อของคุณที่นี่"
-          autocomplete="name"
-          maxlength="100"
-        >
-      </div>
+      
+<div class="form-group">
+  <label for="student-id">รหัสนักศึกษา</label>
+  <input
+    id="student-id"
+    type="text"
+    placeholder="กรอกรหัสนักศึกษาของคุณ"
+    autocomplete="off"
+    inputmode="numeric"
+    maxlength="20"
+    required
+  >
+</div>
+
+<div class="form-group">
+  <label for="name-input">ชื่อผู้เข้าสอบ</label>
+  <input
+    id="name-input"
+    type="text"
+    placeholder="กรอกชื่อและนามสกุล"
+    autocomplete="name"
+    maxlength="100"
+    required
+  >
+</div>
+
 
       <button id="start-btn" class="primary-btn">
         เริ่มทำข้อสอบ

@@ -1,14 +1,19 @@
 
 let questions = [];
 
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzvst575HdJp-nlmZPjrv_aqUfCqBsL8r8JohKxoSrz8vrXLihuVtOgPtfyLTnvtivI/exec";
+const GOOGLE_SCRIPT_URL =
+  "https://script.google.com/macros/s/AKfycbzvst575HdJp-nlmZPjrv_aqUfCqBsL8r8JohKxoSrz8vrXLihuVtOgPtfyLTnvtivI/exec";
 
 let answers = {};
 let submittedAnswers = {};
 let currentIndex = 0;
+
+let studentId = "";
 let studentName = "";
+
 let startedAt = 0;
 let timerInterval = null;
+let isFinishing = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -16,12 +21,18 @@ const startScreen = $("start-screen");
 const quizScreen = $("quiz-screen");
 const resultScreen = $("result-screen");
 
-// อ่านข้อมูล CSV รองรับ comma และเครื่องหมาย quote
+
+// =====================================
+// อ่านไฟล์ CSV
+// =====================================
+
 function parseCSV(text) {
   const rows = [];
   let row = [];
   let field = "";
   let quoted = false;
+
+  text = text.replace(/^\uFEFF/, "");
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -54,14 +65,15 @@ function parseCSV(text) {
 
   if (field.length || row.length) {
     row.push(field);
-    if (row.some(cell => cell.trim() !== "")) rows.push(row);
+
+    if (row.some(cell => cell.trim() !== "")) {
+      rows.push(row);
+    }
   }
 
   if (!rows.length) return [];
 
-  const headers = rows.shift().map(
-    h => h.replace(/^\uFEFF/, "").trim()
-  );
+  const headers = rows.shift().map(h => h.trim());
 
   return rows.map(values => {
     const item = {};
@@ -74,9 +86,15 @@ function parseCSV(text) {
   });
 }
 
-// โหลดข้อสอบจาก questions.csv
+
+// =====================================
+// โหลดข้อสอบ
+// =====================================
+
 async function loadQuestions() {
-  const response = await fetch("questions.csv");
+  const response = await fetch("questions.csv", {
+    cache: "no-store"
+  });
 
   if (!response.ok) {
     throw new Error("โหลด CSV ไม่สำเร็จ");
@@ -100,9 +118,81 @@ async function loadQuestions() {
   if (!questions.length) {
     throw new Error("ไม่พบข้อมูลข้อสอบใน CSV");
   }
+
+  for (const q of questions) {
+    if (
+      q.choices.some(c => !c.text) ||
+      !q.choices.some(c => c.key === q.answer)
+    ) {
+      throw new Error(
+        `ตรวจสอบข้อ ${q.id}: ตัวเลือกไม่ครบหรือค่าเฉลยไม่ใช่ ก ข ค ง`
+      );
+    }
+  }
 }
 
-// แสดงข้อสอบและเฉลยทันทีหลังเลือกคำตอบ
+
+// =====================================
+// เริ่มทำข้อสอบ
+// =====================================
+
+$("start-btn").addEventListener("click", async () => {
+  studentId = $("student-id").value.trim();
+  studentName = $("name-input").value.trim();
+
+  if (!studentId || !studentName) {
+    $("start-error").textContent =
+      "กรุณากรอกรหัสนักศึกษาและชื่อผู้สอบให้ครบ";
+
+    if (!studentId) {
+      $("student-id").focus();
+    } else {
+      $("name-input").focus();
+    }
+
+    return;
+  }
+
+  $("start-error").textContent = "";
+  $("start-btn").disabled = true;
+
+  try {
+    await loadQuestions();
+
+    answers = {};
+    submittedAnswers = {};
+    currentIndex = 0;
+    isFinishing = false;
+
+    startedAt = Date.now();
+
+    startScreen.classList.add("hidden");
+    resultScreen.classList.add("hidden");
+    quizScreen.classList.remove("hidden");
+
+    updateTimer();
+
+    clearInterval(timerInterval);
+    timerInterval = setInterval(updateTimer, 1000);
+
+    showQuestion();
+
+  } catch (error) {
+    console.error(error);
+
+    $("start-error").textContent =
+      "โหลดข้อสอบไม่ได้ ตรวจสอบ questions.csv และรูปแบบข้อมูล";
+
+  } finally {
+    $("start-btn").disabled = false;
+  }
+});
+
+
+// =====================================
+// แสดงคำถามและเฉลย
+// =====================================
+
 function showQuestion() {
   const q = questions[currentIndex];
   const isAnswered = submittedAnswers[q.id] === true;
@@ -120,6 +210,7 @@ function showQuestion() {
 
   q.choices.forEach(choice => {
     const button = document.createElement("button");
+
     button.type = "button";
     button.className = "choice";
 
@@ -156,7 +247,6 @@ function showQuestion() {
     choices.appendChild(button);
   });
 
-  // ข้อความบอกผลถูกหรือผิด
   let feedback = $("answer-feedback");
 
   if (!feedback) {
@@ -166,32 +256,27 @@ function showQuestion() {
     choices.after(feedback);
   }
 
-  if (isAnswered) {
-    if (answers[q.id] === q.answer) {
-      feedback.textContent = "✓ ถูกต้อง! เก่งมาก 🎉";
-      feedback.className =
-        "answer-feedback correct-text";
-    } else {
-      const correctChoice = q.choices.find(
-        choice => choice.key === q.answer
-      );
+  if (isAnswered && answers[q.id] === q.answer) {
+    feedback.textContent = "✓ ถูกต้อง! เก่งมาก 🎉";
+    feedback.className = "answer-feedback correct-text";
 
-      feedback.textContent =
-        `✗ ยังไม่ถูก เฉลย: ${q.answer}` +
-        (correctChoice ? ` ${correctChoice.text}` : "");
+  } else if (isAnswered) {
+    const correctChoice = q.choices.find(
+      choice => choice.key === q.answer
+    );
 
-      feedback.className =
-        "answer-feedback incorrect-text";
-    }
-  } else {
     feedback.textContent =
-      "เลือกคำตอบเพื่อดูเฉลยทันที";
+      `✗ ยังไม่ถูก เฉลย: ${q.answer}` +
+      (correctChoice ? ` ${correctChoice.text}` : "");
 
+    feedback.className = "answer-feedback incorrect-text";
+
+  } else {
+    feedback.textContent = "เลือกคำตอบเพื่อดูเฉลยทันที";
     feedback.className = "answer-feedback";
   }
 
   $("prev-btn").disabled = currentIndex === 0;
-
   $("next-btn").disabled = !isAnswered;
 
   $("next-btn").textContent =
@@ -200,7 +285,11 @@ function showQuestion() {
       : "ข้อถัดไป";
 }
 
-// แปลงวินาทีเป็น นาที:วินาที
+
+// =====================================
+// จับเวลา
+// =====================================
+
 function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60)
     .toString().padStart(2, "0");
@@ -211,67 +300,36 @@ function formatTime(totalSeconds) {
   return `${minutes}:${seconds}`;
 }
 
-// อัปเดตเวลา
 function updateTimer() {
+  if (!startedAt) return;
+
   const elapsed = Math.floor(
     (Date.now() - startedAt) / 1000
   );
 
-  $("timer").textContent =
-    `เวลา ${formatTime(elapsed)}`;
+  $("timer").textContent = `เวลา ${formatTime(elapsed)}`;
 }
 
-// เริ่มทำข้อสอบ
-$("start-btn").addEventListener("click", async () => {
-  studentName = $("name-input").value.trim();
 
-  if (!studentName) {
-    $("start-error").textContent =
-      "กรุณากรอกชื่อผู้สอบ";
-    return;
-  }
+// =====================================
+// ย้อนกลับ
+// =====================================
 
-  $("start-error").textContent = "กำลังโหลดข้อสอบ...";
-
-  try {
-    await loadQuestions();
-
-    answers = {};
-    submittedAnswers = {};
-    currentIndex = 0;
-
-    startedAt = Date.now();
-
-    startScreen.classList.add("hidden");
-    resultScreen.classList.add("hidden");
-    quizScreen.classList.remove("hidden");
-
-    $("start-error").textContent = "";
-
-    updateTimer();
-
-    clearInterval(timerInterval);
-    timerInterval = setInterval(updateTimer, 1000);
-
-    showQuestion();
-  } catch (error) {
-    console.error(error);
-
-    $("start-error").textContent =
-      "โหลดข้อสอบไม่ได้ ตรวจสอบว่า questions.csv อยู่ในโฟลเดอร์เดียวกับ index.html และเปิดผ่าน Live Server";
-  }
-});
-
-// ย้อนกลับไปดูข้อก่อนหน้า
 $("prev-btn").addEventListener("click", () => {
-  if (currentIndex > 0) {
+  if (currentIndex > 0 && !isFinishing) {
     currentIndex--;
     showQuestion();
   }
 });
 
-// ไปข้อถัดไป หรือส่งคำตอบเมื่อถึงข้อสุดท้าย
+
+// =====================================
+// ข้อถัดไป / ส่งข้อสอบ
+// =====================================
+
 $("next-btn").addEventListener("click", () => {
+  if (isFinishing) return;
+
   const q = questions[currentIndex];
 
   if (!submittedAnswers[q.id]) return;
@@ -284,15 +342,23 @@ $("next-btn").addEventListener("click", () => {
   }
 });
 
-// สรุปคะแนนและส่งข้อมูลไป Google Sheets
+
+// =====================================
+// สรุปคะแนนและส่งข้อมูล
+// =====================================
+
 async function finishQuiz() {
+  if (isFinishing) return;
+
+  isFinishing = true;
+  $("next-btn").disabled = true;
+  $("prev-btn").disabled = true;
+
   clearInterval(timerInterval);
 
-  const score = questions.reduce(
-    (sum, q) =>
-      sum + (answers[q.id] === q.answer ? 1 : 0),
-    0
-  );
+  const score = questions.reduce((sum, q) => {
+    return sum + (answers[q.id] === q.answer ? 1 : 0);
+  }, 0);
 
   const total = questions.length;
   const percentage = Math.round((score / total) * 100);
@@ -307,19 +373,24 @@ async function finishQuiz() {
   resultScreen.classList.remove("hidden");
 
   $("result-name").textContent =
-    `ชื่อผู้สอบ: ${studentName}`;
+    `รหัสนักศึกษา: ${studentId} | ชื่อผู้สอบ: ${studentName}`;
 
   $("result-score").textContent = `${score}/${total}`;
-  $("result-percent").textContent =
-    `คิดเป็น ${percentage}%`;
-
-  $("result-time").textContent =
-    `ใช้เวลา ${time} นาที`;
+  $("result-percent").textContent = `คิดเป็น ${percentage}%`;
+  $("result-time").textContent = `ใช้เวลา ${time}`;
 
   const saveStatus = $("save-status");
+  saveStatus.textContent = "กำลังส่งผลสอบไป Google Sheets...";
 
-  saveStatus.textContent =
-    "กำลังส่งผลสอบไป Google Sheets...";
+  const payload = {
+    studentId: studentId,
+    name: studentName,
+    score: score,
+    total: total,
+    percentage: percentage,
+    time: time,
+    submittedAt: new Date().toISOString()
+  };
 
   try {
     await fetch(GOOGLE_SCRIPT_URL, {
@@ -328,36 +399,43 @@ async function finishQuiz() {
       headers: {
         "Content-Type": "text/plain;charset=utf-8"
       },
-      body: JSON.stringify({
-        name: studentName,
-        score: score,
-        total: total,
-        percentage: percentage,
-        time: time
-      })
+      body: JSON.stringify(payload)
     });
 
     saveStatus.textContent =
-      "ส่งคำขอบันทึกผลสอบแล้ว กรุณาตรวจสอบ Google Sheets";
+      "ส่งคำขอบันทึกแล้ว กรุณาตรวจสอบ Google Sheets";
+
   } catch (error) {
     console.error("ส่งผลสอบไม่สำเร็จ:", error);
 
     saveStatus.textContent =
-      "ส่งผลสอบไม่ได้ กรุณาตรวจสอบการเชื่อมต่อ";
+      "ส่งผลสอบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต";
   }
 }
 
-// กลับไปหน้าเริ่มต้นเพื่อทำข้อสอบใหม่
+
+// =====================================
+// กลับไปเริ่มใหม่
+// =====================================
+
 $("restart-btn").addEventListener("click", () => {
   clearInterval(timerInterval);
 
   answers = {};
   submittedAnswers = {};
   currentIndex = 0;
+  studentId = "";
+  studentName = "";
+  startedAt = 0;
+  isFinishing = false;
 
+  $("student-id").value = "";
   $("name-input").value = "";
   $("start-error").textContent = "";
   $("save-status").textContent = "";
+
+  $("start-btn").innerHTML = "เริ่มทำข้อสอบ";
+  $("timer").textContent = "เวลา 00:00";
 
   resultScreen.classList.add("hidden");
   quizScreen.classList.add("hidden");

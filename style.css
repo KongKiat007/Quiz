@@ -828,3 +828,26 @@ body {
     font-size: 14px;
   }
 }
+.form-group {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto 18px;
+  text-align: left;
+}
+
+.form-group input {
+  display: block;
+  width: 100%;
+  min-height: 50px;
+  padding: 12px 15px;
+  border: 1.5px solid #dbe2ef;
+  border-radius: 12px;
+  background: #fff;
+  font: inherit;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #818cf8;
+  box-shadow: 0 0 0 4px #eef2ff;
+}
